@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+
+import json
+from json import JSONDecodeError
+import argparse
+import sys
+
+default_indent = 4
+
+parser = argparse.ArgumentParser(description = 'Turn JSON into vaguely readable documents')
+
+parser.add_argument('files', type=str, nargs='*', help='JSON files to parse')
+parser.add_argument('--indent', type=int, default=default_indent, help=f'Number of characters to indent each level; defults to {default_indent}')
+
+args = parser.parse_args()
+
+#Flag to tell us if it's the first one so we can output a blank line
+#to separate the results:
+first = True
+
+#Flag to tell us if the last thing had an error and
+#we shouldn't output the blocking changes between files:
+had_error_last = False
+
+#Count of files we actually output so we don't spit out
+#an empty newline at the end if all files errored:
+files_output = 0
+
+#If we have more than one file, let's wrap everything in JSON
+#brackets, so it'll still be valid JSON
+if len(args.files) > 1:
+    print("[")
+
+#Iterate the files we've been given:
+for file in args.files:
+    #Is it first run?
+    if first:
+        #Nothing to do; there can't be any trailing
+        #output cleanup on the first one.
+        first = False
+    elif not had_error_last:
+        #Ok, in this case we've left the end of the previous
+        #item, with no newline. We want to:
+        #
+        #1) Output a "," so the result will still be parseable JSON
+        #2) Output a newline after that
+        print(",")
+    else:
+        #We had an error last time. We've output nothing since the
+        #last time through the loop, so there's nothing
+        #dangling to clean up. Clear the flag though so it'll work
+        #well next time:
+        had_error_last = True
+
+    #Clear/declare where we'll store the raw input:
+    raw = None
+
+    #If we've got more than a single item, output
+    #information about whatever file we're outputting.
+    #We output this on stderr so that the other data
+    #we emit on stdout will be parseable JSON...
+    if len(args.files) > 1:
+        print(f'FILE: "{file}"', file=sys.stderr)
+
+    try:
+        with open(file) as inf:
+            try:
+                raw = inf.read()
+            except UnicodeDecodeError:
+                print(f'File "{file}" appears to be a binary file; skipping', file=sys.stderr)
+    except FileNotFoundError:
+        print(f'File "{file}" not found', file=sys.stderr)
+
+    if raw:
+        data = None
+        
+        try:
+            data = json.loads(raw)
+        except JSONDecodeError as err:
+            print(f'File "{file}" does not seem to be JSON: {err}')
+
+        if data:
+            result = json.dumps(data, sort_keys=True,
+                                indent=args.indent, separators=(',', ': '))
+
+            if len(args.files) > 1:
+                #If we've got more than one file, we need to
+                #prepend four leading spaces since we've wrapped
+                #the whole thing in brackets to make it valid JSON.
+                #
+                #Unfortunately I was unable to find a one-line
+                #way to do this, so we have to break it into a list
+                #of strings, fix each string, then reassamble it
+                    
+                lines = result.splitlines()
+
+                new_lines = []
+
+                for line in lines:
+                    line = line.rjust(len(line) + args.indent)
+
+                    new_lines.append(line)
+
+                result = "\n".join(new_lines)
+
+            #Output the result. Supress the line-ending
+            #because we may need to put a comma on it if
+            #we're not the last item (and we have more than one)
+            print(result, end='')
+            files_output += 1
+
+#Ok, we're done. If we output anything, we need to
+#output a final trailing newling:
+if files_output:
+    print()
+
+#And, if we had more than one file, close our dangling bracket:
+if len(args.files) > 1:
+    print(']')
